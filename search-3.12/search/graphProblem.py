@@ -43,7 +43,7 @@ class GraphProblem(SearchProblem):
         state, 'action' is the action required to get there, and 'stepCost' is
         the incremental cost of expanding to that successor.
         """
-        return self.edges[state]
+        return self.edges.get(state, [])
 
     def getCostOfActions(self, actions):
         """

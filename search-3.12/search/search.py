@@ -111,10 +111,14 @@ def depthFirstSearch(problem):
     while True:
         if len(fringe) == 0:
             return False
-        node = fringe.remove_first() # PSEUDOCODE!!!
+        node = fringe.pop(0) # PSEUDOCODE!!!
         if problem.isGoalState(node.state):
             return node.getActionPath()
-        pass
+        if node.state not in closed:
+            closed.add(node.state)
+            for (successor, action, stepCost) in problem.getSuccessors(node.state):
+                child_node = Node(successor, action, stepCost, node)
+                fringe.append(child_node)
 
 def breadthFirstSearch(problem):
     """Search the shallowest nodes in the search tree first."""
