@@ -97,21 +97,21 @@ def depthFirstSearch(problem):
     To get started, you might want to try some of these simple commands to
     understand the search problem that is being passed in:
     """
-
+    """
     print("Start:", problem.getStartState())
     print("Is the start a goal?", problem.isGoalState(problem.getStartState()))
     print("Start's successors:", problem.getSuccessors(problem.getStartState()))
     print("Type of problem:", type(problem))
-
+    """
     current_node = Node(problem.getStartState(), None, 0, None)
     closed = set([])
     fringe = []
     fringe.append(current_node)
-
+  
     while True:
         if len(fringe) == 0:
             return False
-        node = fringe.pop(0) # PSEUDOCODE!!!
+        node = fringe.pop() # PSEUDOCODE!!!
         if problem.isGoalState(node.state):
             return node.getActionPath()
         if node.state not in closed:
