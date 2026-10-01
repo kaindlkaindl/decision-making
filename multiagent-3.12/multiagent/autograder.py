@@ -112,7 +112,7 @@ def setModuleName(module, filename):
             setattr(o, '__file__', filename)
             # TODO: assign member __file__'s?
         #print i, type(o)
-=
+
 def loadModuleFile(moduleName, filePath):
     ##with open(filePath, 'r') as f:
     ##    return imp.load_module(moduleName, f, "%s.py" % moduleName, (".py", "r", imp.PY_SOURCE))
