@@ -258,38 +258,44 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
         """
           Returns the expectimax action using self.depth and self.evaluationFunction
         """
-        def expectimax(state, depth, agent):
+        def expectimax(state, depth, agentIndex):
+            # stop als de maximale diepte is bereikt of het spel afgelopen is
             if depth == self.depth or state.isWin() or state.isLose():
                 return self.evaluationFunction(state)
 
-            actions = state.getLegalActions(agent)
+            actions = state.getLegalActions(agentIndex)
             if not actions:
                 return self.evaluationFunction(state)
 
+            # bepaal volgende agent; als we rond zijn bij pacman (0), verhoog de diepte
             numAgents = state.getNumAgents()
-            nextAgent = (agent + 1) % numAgents
+            nextAgent = (agentIndex + 1) % numAgents
             nextDepth = depth + 1 if nextAgent == 0 else depth
 
-            if agent == 0:
-                # pacman pakt het maximum
-                return max(expectimax(state.generateSuccessor(agent, a), nextDepth, nextAgent) for a in actions)
+            # pacman (agent 0) kiest de actie met de maximale score
+            if agentIndex == 0:
+                return max(expectimax(state.generateSuccessor(agentIndex, action), nextDepth, nextAgent) for action in actions)
+            # spoken kiezen uniform willekeurig: bereken de verwachte waarde (gemiddelde)
             else:
-                # spoken kiezen random, dus gemiddelde nemen
-                return sum(expectimax(state.generateSuccessor(agent, a), nextDepth, nextAgent) for a in actions) / len(actions)
+                return sum(expectimax(state.generateSuccessor(agentIndex, action), nextDepth, nextAgent) for action in actions) / len(actions)
 
+        # kies op root-niveau de actie met de hoogste verwachte score
         legalActions = gameState.getLegalActions(0)
+        if not legalActions:
+            return Directions.STOP
+
         bestAction = None
         bestScore = -float('inf')
         numAgents = gameState.getNumAgents()
         nextAgent = 1 % numAgents
         nextDepth = 1 if nextAgent == 0 else 0
 
-        for a in legalActions:
-            succ = gameState.generateSuccessor(0, a)
-            score = expectimax(succ, nextDepth, nextAgent)
+        for action in legalActions:
+            successor = gameState.generateSuccessor(0, action)
+            score = expectimax(successor, nextDepth, nextAgent)
             if score > bestScore:
                 bestScore = score
-                bestAction = a
+                bestAction = action
 
         return bestAction
 
