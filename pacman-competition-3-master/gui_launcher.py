@@ -37,11 +37,11 @@ if os.path.isdir(LAYOUTS_DIR):
 
 # Available teams
 available_teams = [
-    "ApexPredators",
-    "baselineTeam",
-    "simpleTeam",
-    "heuristicTeam",
-    "myTeam"
+    "ApexPredators.py",
+    "baselineTeam.py",
+    "simpleTeam.py",
+    "heuristicTeam.py",
+    "myTeam.py"
 ]
 
 
@@ -78,8 +78,8 @@ class ModernPacmanLauncher:
         self._setup_tk_styles()
 
         # Variables
-        self.red_team_var = tk.StringVar(value="ApexPredators")
-        self.blue_team_var = tk.StringVar(value="baselineTeam")
+        self.red_team_var = tk.StringVar(value="ApexPredators.py")
+        self.blue_team_var = tk.StringVar(value="baselineTeam.py")
         self.layout_var = tk.StringVar(value="defaultCapture")
         self.delay_var = tk.DoubleVar(value=0.005)  # Fast by default
         self.moves_var = tk.StringVar(value="1200")
@@ -137,11 +137,11 @@ class ModernPacmanLauncher:
         t_frame = tk.Frame(h_inner, bg=self.c_surface)
         t_frame.pack(side=tk.LEFT)
 
-        title_lbl = tk.Label(t_frame, text="👾 PACMAN CAPTURE THE FLAG · ARENA",
+        title_lbl = tk.Label(t_frame, text="👾 PACMAN CAPTURE THE FLAG ARENA",
                              font=("Segoe UI", 15, "bold"), bg=self.c_surface, fg=self.c_text_main)
         title_lbl.pack(anchor="w")
 
-        sub_lbl = tk.Label(t_frame, text="Decision Making (Minor Autonome Systemen) · Team: ApexPredators (HvA / UvA)",
+        sub_lbl = tk.Label(t_frame, text="Decision Making (Autonome Systemen) | ApexPredators.py",
                            font=("Segoe UI", 8), bg=self.c_surface, fg=self.c_text_muted)
         sub_lbl.pack(anchor="w", pady=(2, 0))
 
@@ -162,7 +162,7 @@ class ModernPacmanLauncher:
         main_body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 10))
 
         # =========================================================================
-        # SECTION 1: PRESET CARDS (De 5 wedstrijden - Prachtige Interactieve Kaarten)
+        # SECTION 1: PRESET CARDS
         # =========================================================================
         p_card_container = tk.Frame(main_body, bg=self.c_surface, highlightbackground=self.c_border, highlightthickness=1)
         p_card_container.pack(fill=tk.X, pady=(0, 10))
@@ -170,9 +170,9 @@ class ModernPacmanLauncher:
         p_head = tk.Frame(p_card_container, bg=self.c_surface)
         p_head.pack(fill=tk.X, padx=14, pady=(10, 6))
 
-        tk.Label(p_head, text="⚡ KIES EEN WEDSTRIJD SCENARIO", font=("Segoe UI", 10, "bold"),
+        tk.Label(p_head, text="⚡ WEDSTRIJD PRESETS", font=("Segoe UI", 10, "bold"),
                  bg=self.c_surface, fg=self.c_accent_blue).pack(side=tk.LEFT)
-        tk.Label(p_head, text="Klik op een kaart om teams en vlaggen direct optimaal in te stellen",
+        tk.Label(p_head, text="Klik op een kaart om de .py teams direct in te stellen",
                  font=("Segoe UI", 8), bg=self.c_surface, fg=self.c_text_muted).pack(side=tk.LEFT, padx=10)
 
         # 5 Cards Grid
@@ -182,53 +182,53 @@ class ModernPacmanLauncher:
         self.presets_data = [
             {
                 "icon": "⚡",
-                "title": "Slimme AI vs Baseline",
-                "red": "ApexPredators",
-                "blue": "baselineTeam",
+                "title": "ApexPredators.py vs baselineTeam.py",
+                "red": "ApexPredators.py",
+                "blue": "baselineTeam.py",
                 "keys": False,
-                "badge": "Verpletterend (+15..+30)",
+                "badge": "baselineTeam.py",
                 "color": self.c_accent_green,
-                "desc": "ApexPredators domineert standaard Berkeley baseline"
+                "desc": "ApexPredators.py vs baselineTeam.py"
             },
             {
                 "icon": "🧠",
-                "title": "Iteratie 3 vs 2 (FSM)",
-                "red": "ApexPredators",
-                "blue": "simpleTeam",
+                "title": "ApexPredators.py vs simpleTeam.py",
+                "red": "ApexPredators.py",
+                "blue": "simpleTeam.py",
                 "keys": False,
-                "badge": "Bayes & A* vs Toestand",
+                "badge": "simpleTeam.py",
                 "color": self.c_accent_purple,
-                "desc": "Volledige AI vs Transparante Toestand-Automaat"
+                "desc": "ApexPredators.py vs simpleTeam.py"
             },
             {
                 "icon": "🎯",
-                "title": "Iteratie 3 vs 1 (Heuristiek)",
-                "red": "ApexPredators",
-                "blue": "heuristicTeam",
+                "title": "ApexPredators.py vs heuristicTeam.py",
+                "red": "ApexPredators.py",
+                "blue": "heuristicTeam.py",
                 "keys": False,
-                "badge": "Topologie vs Reflex",
+                "badge": "heuristicTeam.py",
                 "color": self.c_accent_yellow,
-                "desc": "ApexPredators vs Feature-Scoring Evaluator"
+                "desc": "ApexPredators.py vs heuristicTeam.py"
             },
             {
                 "icon": "⚔️",
-                "title": "Spiegelmatch (AI vs AI)",
-                "red": "ApexPredators",
-                "blue": "ApexPredators",
+                "title": "ApexPredators.py vs ApexPredators.py",
+                "red": "ApexPredators.py",
+                "blue": "ApexPredators.py",
                 "keys": False,
-                "badge": "Clash der Titanen",
+                "badge": "ApexPredators.py",
                 "color": self.c_accent_cyan,
-                "desc": "Twee identieke slimme teams tegen elkaar"
+                "desc": "ApexPredators.py vs ApexPredators.py"
             },
             {
                 "icon": "🕹️",
-                "title": "Zelf Spelen (Pijltjestoetsen)",
-                "red": "ApexPredators",
-                "blue": "ApexPredators",
+                "title": "keyboardAgents.py vs ApexPredators.py",
+                "red": "ApexPredators.py",
+                "blue": "ApexPredators.py",
                 "keys": True,
-                "badge": "Jij bent Agent 0 (Rood)",
+                "badge": "keyboardAgents.py",
                 "color": self.c_accent_red,
-                "desc": "Bestuur Rood met pijltjestoetsen tegen de AI"
+                "desc": "keyboardAgents.py (--keys0)"
             }
         ]
 
@@ -241,8 +241,9 @@ class ModernPacmanLauncher:
             # Icon + Title
             t_box = tk.Frame(c_box, bg=self.c_surface_elevated)
             t_box.pack(fill=tk.X, anchor="w")
-            tk.Label(t_box, text=f"{p['icon']} {p['title']}", font=("Segoe UI", 9, "bold"),
-                     bg=self.c_surface_elevated, fg=p["color"]).pack(anchor="w")
+            t_lbl = tk.Label(t_box, text=f"{p['icon']} {p['title']}", font=("Segoe UI", 8, "bold"),
+                             bg=self.c_surface_elevated, fg=p["color"], wraplength=170, justify="left")
+            t_lbl.pack(anchor="w")
 
             # Badge pill
             b_lbl = tk.Label(c_box, text=p["badge"], font=("Segoe UI", 7, "bold"),
@@ -258,13 +259,14 @@ class ModernPacmanLauncher:
             self.preset_cards.append({
                 "frame": c_box,
                 "title_box": t_box,
+                "title_lbl": t_lbl,
                 "badge": b_lbl,
                 "desc": d_lbl,
                 "index": idx
             })
 
             # Bind click and double-click events
-            for widget in (c_box, t_box, b_lbl, d_lbl):
+            for widget in (c_box, t_box, t_lbl, b_lbl, d_lbl):
                 widget.bind("<Button-1>", lambda e, i=idx: self._select_preset_card(i))
                 widget.bind("<Double-Button-1>", lambda e, i=idx: self._on_card_double_click(i))
                 widget.bind("<Enter>", lambda e, i=idx: self._on_card_hover(i, True))
@@ -530,6 +532,7 @@ class ModernPacmanLauncher:
 
             c["frame"].config(bg=bg_col, highlightbackground=border_col, highlightthickness=thickness)
             c["title_box"].config(bg=bg_col)
+            c["title_lbl"].config(bg=bg_col)
             c["desc"].config(bg=bg_col)
 
         self._update_command_preview()
@@ -542,6 +545,7 @@ class ModernPacmanLauncher:
         bg_col = "#252b36" if entering else self.c_surface_elevated
         c["frame"].config(bg=bg_col)
         c["title_box"].config(bg=bg_col)
+        c["title_lbl"].config(bg=bg_col)
         c["desc"].config(bg=bg_col)
 
     def _set_speed_preset(self, val: float):
