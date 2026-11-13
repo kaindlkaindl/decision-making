@@ -14,32 +14,50 @@
 """
 myTeam.py / ApexPredators.py
 ----------------------------
-Team: ApexPredators
-Course: Decision Making (Minor Autonome Systemen) - HvA / UvA
-Contest: Pacman Capture the Flag
+Team: ApexPredators (Matin & Gabriel)
+Vak: Decision Making (Minor Autonome Systemen) - HvA / UvA
 
-Championship Architectuur (1 Aanvaller + 1 Verdediger):
-- OffensiveAgent:
-  * Doel-commitment (Target Persistence): voorkomt target-thrashing en oscillaties.
-  * BFS-padplanning met dynamische geestenvermijding op vijandelijk gebied.
-  * Flankeert automatisch langs camping defenders via open grensovergangen.
-  * Krachtcapsule-opportunisme: eet capsule -> jaagt bange spoken op.
-  * Veilig bankeren bij 3-4 pellets of naderend gevaar.
-- DefensiveAgent:
-  * Directe onderschepping van indringers via getMazeDistance.
-  * Alarminterceptie bij verdwenen voedsel.
-  * Strategische frontline-patrouille langs grensovergangen nabij het voedselzwaartepunt.
-  * Scared-standoff containment (afstand 2-3) om niet dood te gaan tijdens vijandelijke capsule.
+Dit is ons sterkste team. We combineren drie technieken:
+
+1. Doolhofanalyse (MazeAnalyzer)
+   Voor het spel begint zoeken we alle doodlopende gangen. Van elke cel
+   onthouden we de ingang (gate) en de diepte. Zo weten we later of we een
+   gang veilig in kunnen lopen of dat een spook ons kan insluiten.
+
+2. Kansverdeling over de vijand (BeliefTracker)
+   Buiten 5 vakjes zien we de tegenstander niet. We houden daarom per
+   tegenstander een kansverdeling bij over alle vakjes. We updaten die met
+   (a) de ruisachtige afstandsmeting, (b) het feit dat we hem binnen 5 vakjes
+   zouden zien, (c) verdwenen eigen stippen en (d) zijn beweging per zet.
+
+3. Planning met gevarenkosten (Dijkstra / A*)
+   We rekenen kortste routes uit over het doolhof, maar vakjes bij een spook
+   krijgen een hoge strafkost. Daardoor lopen we er automatisch omheen.
+   Doelen kiezen we op basis van routekosten en afstand naar huis, en we
+   houden ons doel vast (goal commitment) zodat we niet gaan oscilleren.
+
+Rolverdeling: 1 aanvaller (OffensiveAgent) en 1 verdediger (DefensiveAgent).
+Als we aan het eind van het spel achterstaan, wordt de verdediger ook aanvaller.
 """
 
 from __future__ import annotations
 
-import collections
+import heapq
+import os
 import random
+from collections import defaultdict
 from typing import Optional
 
 from captureAgents import CaptureAgent
-from game import Directions, Actions
+from game import Directions
+from util import manhattanDistance
+
+DIRS = [(Directions.NORTH, (0, 1)), (Directions.SOUTH, (0, -1)),
+        (Directions.EAST, (1, 0)), (Directions.WEST, (-1, 0))]
+
+SIGHT = 5            # zichtbereik (Manhattan)
+BLOCK = 1000.0       # strafkost voor vakjes waar we direct gepakt worden
+SCARED_ROUNDS = 40   # hoe lang een tegenstander bang blijft na een capsule
 
 
 #################
@@ -52,11 +70,147 @@ def createTeam(firstIndex: int,
                first: str = 'OffensiveAgent',
                second: str = 'DefensiveAgent',
                **kwargs) -> list[CaptureAgent]:
-    """
-    Initialiseert het ApexPredators team met 1 Aanvaller en 1 Verdediger.
-    """
+    """Maakt het team: 1 aanvaller en 1 verdediger."""
     return [globals().get(first, OffensiveAgent)(firstIndex),
             globals().get(second, DefensiveAgent)(secondIndex)]
+
+
+###################
+# Maze analysis   #
+###################
+
+class MazeAnalyzer:
+    """
+    Doolhofanalyse die we eenmalig bij de start doen.
+
+    - cells / nbrs: alle vrije vakjes en hun buren.
+    - Dead-end pruning: we halen steeds cellen met hooguit 1 buur weg. Wat
+      weggehaald wordt is een doodlopende gang. Van elke zo'n cel bewaren we
+      de ingang (gate = eerste cel die blijft staan) en de diepte (aantal
+      stappen tot die ingang).
+    """
+
+    def __init__(self, walls):
+        self.width = walls.width
+        self.height = walls.height
+        self.walls = walls
+        self.cells = [(x, y) for x in range(self.width) for y in range(self.height)
+                      if not walls[x][y]]
+        cellset = set(self.cells)
+        self.nbrs = {}
+        for (x, y) in self.cells:
+            self.nbrs[(x, y)] = [(x + dx, y + dy) for _, (dx, dy) in DIRS
+                                 if (x + dx, y + dy) in cellset]
+        self.gate = {}
+        self.depth = {}
+        self._prune()
+
+    def _prune(self):
+        alive = set(self.cells)
+        deg = {c: len(self.nbrs[c]) for c in self.cells}
+        stack = [c for c in self.cells if deg[c] <= 1]
+        parent = {}
+        while stack:
+            c = stack.pop()
+            if c not in alive:
+                continue
+            alive.discard(c)
+            live = [n for n in self.nbrs[c] if n in alive]
+            if live:
+                p = live[0]
+                parent[c] = p
+                deg[p] -= 1
+                if deg[p] <= 1:
+                    stack.append(p)
+        for c in parent:
+            cur, d = c, 0
+            seen = 0
+            while cur in parent and seen < 500:
+                cur = parent[cur]
+                d += 1
+                seen += 1
+            if cur in alive:          # alleen echte gangen met een ingang
+                self.gate[c] = cur
+                self.depth[c] = d
+
+    def dijkstra(self, start, extra_cost):
+        """Kortste route met kosten 1 + gevarenkosten per betreden vakje."""
+        dist = {start: 0.0}
+        prev = {}
+        heap = [(0.0, start)]
+        while heap:
+            d, c = heapq.heappop(heap)
+            if d > dist.get(c, 1e18):
+                continue
+            for n in self.nbrs[c]:
+                nd = d + 1.0 + extra_cost.get(n, 0.0)
+                if nd < dist.get(n, 1e18):
+                    dist[n] = nd
+                    prev[n] = c
+                    heapq.heappush(heap, (nd, n))
+        return dist, prev
+
+
+###################
+# Belief tracker  #
+###################
+
+class BeliefTracker:
+    """
+    Kansverdeling B(s) over de positie van een tegenstander.
+    Elke beurt: (1) elapse (hij zet een stap), (2) observe (nieuwe informatie).
+    """
+
+    def __init__(self, maze: MazeAnalyzer, start):
+        self.maze = maze
+        self.p = {start: 1.0}
+
+    def elapse(self):
+        new = defaultdict(float)
+        for s, pr in self.p.items():
+            options = self.maze.nbrs[s] + [s]
+            share = pr / len(options)
+            for o in options:
+                new[o] += share
+        self.p = dict(new)
+
+    def set_point(self, s):
+        self.p = {s: 1.0}
+
+    def observe(self, visible, my_pos, team_positions, noisy, gameState):
+        if visible is not None:
+            self.p = {(int(visible[0]), int(visible[1])): 1.0}
+            return
+
+        def allowed(s):
+            return all(manhattanDistance(t, s) > SIGHT for t in team_positions)
+
+        def likelihood(s):
+            if noisy is None:
+                return 1.0
+            return gameState.getDistanceProb(manhattanDistance(my_pos, s), noisy)
+
+        new = {}
+        for s, pr in self.p.items():
+            if not allowed(s):
+                continue
+            w = likelihood(s)
+            if w > 0:
+                new[s] = pr * w
+        if not new:        # we zaten er naast: opnieuw beginnen vanuit de meting
+            for s in self.maze.cells:
+                if allowed(s):
+                    w = likelihood(s)
+                    if w > 0:
+                        new[s] = w
+        if not new:
+            new = {s: 1.0 for s in self.maze.cells}
+        total = sum(new.values())
+        self.p = {s: v / total for s, v in new.items()}
+
+    def best(self):
+        s = max(self.p, key=self.p.get)
+        return s, self.p[s]
 
 
 #####################
@@ -64,149 +218,353 @@ def createTeam(firstIndex: int,
 #####################
 
 class ApexBaseAgent(CaptureAgent):
-    """
-    Gemeenschappelijke functionaliteit voor topologie, afstanden en navigatie.
-    """
+    """Gedeelde logica: grenzen, afstanden, beliefs, gevarenkosten en navigatie."""
+
+    scare_end = -10 ** 9      # tijdstip (timeleft) waarop de vijand weer gevaarlijk wordt
+    targets = {}              # gekozen voedseldoel per agent (voor teamcoordinatie)
 
     def registerInitialState(self, gameState):
         super().registerInitialState(gameState)
-        self.start = gameState.getAgentPosition(self.index)
         walls = gameState.getWalls()
         self.walls = walls
         self.width = walls.width
         self.height = walls.height
-
-        # Bepaal gebiedsgrenzen
         self.mid_x = self.width // 2
         self.home_x = (self.mid_x - 1) if self.red else self.mid_x
         self.enemy_x = self.mid_x if self.red else (self.mid_x - 1)
+        self.maze = MazeAnalyzer(walls)
 
-        # Zoek alle doorgangen op de grens
         self.border_crossings = [
             (self.home_x, y) for y in range(self.height)
             if not walls[self.home_x][y] and not walls[self.enemy_x][y]
         ]
         if not self.border_crossings:
-            self.border_crossings = [
-                (self.home_x, y) for y in range(self.height)
-                if not walls[self.home_x][y]
-            ]
+            self.border_crossings = [(self.home_x, y) for y in range(self.height)
+                                     if not walls[self.home_x][y]]
         self.border_crossings.sort(key=lambda b: b[1])
 
-    def is_home(self, pos: tuple[int, int]) -> bool:
-        """Geeft True als de positie op eigen helft ligt."""
+        self.start = gameState.getAgentPosition(self.index)
+        self.opponents = self.getOpponents(gameState)
+        self.beliefs = {o: BeliefTracker(self.maze, gameState.getInitialAgentPosition(o))
+                        for o in self.opponents}
+        self.last_food = set(self.getFoodYouAreDefending(gameState).asList())
+        self.last_caps = list(self.getCapsules(gameState))
+        self.history = []
+        self.current_target = None
+        self.alarm_pos = None
+        self.alarm_age = 0
+        self.wait_count = 0
+        ApexBaseAgent.scare_end = -10 ** 9
+        ApexBaseAgent.targets = {}
+
+    # ---------- kleine hulpfuncties ----------
+
+    def is_home(self, pos) -> bool:
         return pos[0] < self.mid_x if self.red else pos[0] >= self.mid_x
 
-    def dist(self, p1: tuple[int, int], p2: tuple[int, int]) -> int:
-        """Kortste doolhofafstand via Berkeley precomputed distancer."""
-        return self.getMazeDistance(p1, p2)
+    def dist(self, a, b) -> int:
+        return self.getMazeDistance((int(a[0]), int(a[1])), (int(b[0]), int(b[1])))
 
-    def get_active_ghosts(self, gameState) -> list[tuple[int, int]]:
-        """Posities van actieve (gevaarlijke) vijandige spoken."""
-        ghosts = []
-        for opp in self.getOpponents(gameState):
-            s = gameState.getAgentState(opp)
-            p = s.getPosition()
-            if p is not None and not s.isPacman and s.scaredTimer <= 2:
-                ghosts.append(p)
-        return ghosts
+    def my_moves_left(self, gameState) -> int:
+        return gameState.data.timeleft // 4
 
-    def get_scared_ghosts(self, gameState) -> list[tuple[tuple[int, int], int]]:
-        """Posities en timers van kwetsbare (scared) vijandige spoken."""
-        scared = []
-        for opp in self.getOpponents(gameState):
-            s = gameState.getAgentState(opp)
-            p = s.getPosition()
-            if p is not None and not s.isPacman and s.scaredTimer > 2:
-                scared.append((p, s.scaredTimer))
-        return scared
+    def scared_rounds_left(self, gameState) -> int:
+        return max(0, (gameState.data.timeleft - ApexBaseAgent.scare_end) // 4)
 
-    def get_invaders(self, gameState) -> list[tuple[int, tuple[int, int], int]]:
-        """Zichtbare indringers op eigen helft: (index, pos, numCarrying)."""
-        invaders = []
-        for opp in self.getOpponents(gameState):
-            s = gameState.getAgentState(opp)
-            p = s.getPosition()
-            if p is not None and s.isPacman:
-                invaders.append((opp, p, s.numCarrying))
-        return invaders
+    # ---------- informatie bijwerken ----------
 
-    def bfs_direction(self, start: tuple[int, int], goals: set[tuple[int, int]], forbidden: set[tuple[int, int]]) -> Optional[str]:
-        """
-        Vindt via BFS het kortste pad van start naar één van de goals dat forbidden vermijdt.
-        Geeft de eerste actie (richting) terug.
-        """
-        if not goals or start in goals:
+    def update_info(self, gameState):
+        """Werkt beliefs, capsule-timer en positiegeschiedenis bij (elke beurt)."""
+        me = gameState.getAgentPosition(self.index)
+        team_pos = [gameState.getAgentPosition(i) for i in self.getTeam(gameState)]
+        noisy_all = gameState.getAgentDistances()
+
+        # capsule door ons opgegeten? Dan zijn de tegenstanders 40 rondes bang.
+        caps = list(self.getCapsules(gameState))
+        for c in self.last_caps:
+            if c not in caps and c in team_pos:
+                ApexBaseAgent.scare_end = gameState.data.timeleft - 4 * SCARED_ROUNDS
+        self.last_caps = caps
+
+        # eigen verdwenen stippen: daar stond zojuist een indringer
+        cur_food = set(self.getFoodYouAreDefending(gameState).asList())
+        eaten = self.last_food - cur_food
+        self.last_food = cur_food
+
+        for b in self.beliefs.values():
+            b.elapse()
+        for s in eaten:
+            opp = max(self.beliefs, key=lambda o: self.beliefs[o].p.get(s, 0.0))
+            self.beliefs[opp].set_point(s)
+            self.alarm_pos = s
+            self.alarm_age = 0
+        for o, b in self.beliefs.items():
+            noisy = noisy_all[o] if noisy_all else None
+            b.observe(gameState.getAgentPosition(o), me, team_pos, noisy, gameState)
+
+        self.history.append(me)
+        if len(self.history) > 10:
+            self.history.pop(0)
+        self.alarm_age += 1
+
+    def get_threats(self, gameState):
+        """Lijst (positie, gewicht) van gevaarlijke spoken: zichtbaar = 1.0, geschat = 0.6."""
+        threats = []
+        scared_left = self.scared_rounds_left(gameState)
+        for o in self.opponents:
+            st = gameState.getAgentState(o)
+            pos = st.getPosition()
+            if pos is not None:
+                if not st.isPacman and st.scaredTimer <= 3:
+                    threats.append(((int(pos[0]), int(pos[1])), 1.0))
+            elif scared_left <= 6:
+                est, conf = self.beliefs[o].best()
+                if conf >= 0.3 and not self.is_home(est):
+                    threats.append((est, 0.6))
+        return threats
+
+    def build_cost(self, me, threats, scale=1.0):
+        """Strafkosten per vakje op vijandelijk gebied rond spoken en in valkuil-gangen."""
+        cost = {}
+        base = {0: BLOCK, 1: BLOCK, 2: 60.0, 3: 20.0, 4: 6.0}
+        for c in self.maze.cells:
+            if self.is_home(c):
+                continue
+            extra = 0.0
+            for g, w in threats:
+                d = self.dist(g, c)
+                extra += base.get(d, 0.0) * w
+                if c in self.maze.gate:
+                    gate = self.maze.gate[c]
+                    depth = self.maze.depth[c]
+                    # veilig als wij de gang uit zijn voordat het spook bij de ingang kan zijn
+                    if self.dist(g, gate) <= self.dist(me, gate) + 2 * depth + 1:
+                        extra += 600.0 * w
+            if extra:
+                cost[c] = extra * scale
+        return cost
+
+    # ---------- bewegen ----------
+
+    def step_towards(self, gameState, prev, start, target) -> Optional[str]:
+        if target == start:
             return None
-
-        queue = collections.deque()
-        visited = {start}
-
-        x, y = int(start[0]), int(start[1])
-        for a, (dx, dy) in [(Directions.NORTH, (0, 1)), (Directions.SOUTH, (0, -1)),
-                            (Directions.EAST, (1, 0)), (Directions.WEST, (-1, 0))]:
-            nx, ny = x + dx, y + dy
-            nb = (nx, ny)
-            if not self.walls[nx][ny] and nb not in forbidden:
-                if nb in goals:
-                    return a
-                visited.add(nb)
-                queue.append((nb, a))
-
-        while queue:
-            curr, first_action = queue.popleft()
-            cx, cy = int(curr[0]), int(curr[1])
-
-            for a, (dx, dy) in [(Directions.NORTH, (0, 1)), (Directions.SOUTH, (0, -1)),
-                                (Directions.EAST, (1, 0)), (Directions.WEST, (-1, 0))]:
-                nx, ny = cx + dx, cy + dy
-                nb = (nx, ny)
-                if not self.walls[nx][ny] and nb not in visited and nb not in forbidden:
-                    if nb in goals:
-                        return first_action
-                    visited.add(nb)
-                    queue.append((nb, first_action))
-
+        legal = gameState.getLegalActions(self.index)
+        cur = target
+        for _ in range(1000):
+            p = prev.get(cur)
+            if p is None:
+                return None
+            if p == start:
+                break
+            cur = p
+        dx, dy = cur[0] - start[0], cur[1] - start[1]
+        for a, (ax, ay) in DIRS:
+            if (ax, ay) == (dx, dy) and a in legal:
+                return a
         return None
 
-    def get_best_action_towards(self, gameState, target_pos, avoid_positions=None):
-        """
-        Kiest de legale actie die ons het dichtst bij target_pos brengt.
-        Optioneel worden gevaarlijke posities (avoid_positions) gemeden.
-        """
-        if avoid_positions is None:
-            avoid_positions = set()
-
-        legal_actions = gameState.getLegalActions(self.index)
-        moving_actions = [a for a in legal_actions if a != Directions.STOP]
-        if not moving_actions:
-            return Directions.STOP
-
-        best_action = None
-        min_dist = 999999
-
-        for action in moving_actions:
-            succ = gameState.generateSuccessor(self.index, action)
-            next_pos = succ.getAgentPosition(self.index)
-
-            if next_pos in avoid_positions:
+    def greedy_action(self, gameState, target, home_only=False, keep_away=None):
+        """Kies de zet die het dichtst bij target komt (gebruikt voor de verdediger)."""
+        legal = [a for a in gameState.getLegalActions(self.index) if a != Directions.STOP]
+        best, best_val = None, 1e18
+        for a in legal:
+            nxt = gameState.generateSuccessor(self.index, a).getAgentPosition(self.index)
+            if home_only and not self.is_home(nxt):
                 continue
+            val = self.dist(nxt, target)
+            if val < best_val:
+                best, best_val = a, val
+        if best is None:
+            best = legal[0] if legal else Directions.STOP
+        return best
 
-            dist = self.getMazeDistance(next_pos, target_pos)
-            if dist < min_dist:
-                min_dist = dist
-                best_action = action
+    def safe_fallback(self, gameState):
+        legal = gameState.getLegalActions(self.index)
+        moving = [a for a in legal if a != Directions.STOP]
+        return random.choice(moving) if moving else Directions.STOP
 
-        if best_action is None:
-            best_action = min(
-                moving_actions,
-                key=lambda a: self.getMazeDistance(
-                    gameState.generateSuccessor(self.index, a).getAgentPosition(self.index),
-                    target_pos
-                )
-            )
+    def is_oscillating(self) -> bool:
+        h = self.history
+        return len(h) >= 8 and len(set(h[-8:])) <= 2
 
-        return best_action
+    # ---------- aanvallen (ook gebruikt door de verdediger in noodgeval) ----------
+
+    def attack(self, gameState, partner_mode=False):
+        me = gameState.getAgentPosition(self.index)
+        st = gameState.getAgentState(self.index)
+        carrying = st.numCarrying
+        food = self.getFood(gameState).asList()
+        caps = self.getCapsules(gameState)
+        moves_left = self.my_moves_left(gameState)
+
+        threats = self.get_threats(gameState)
+        # Zonder buit op zak is doodgaan goedkoop: dan durven we meer (voorkomt patstelling)
+        scale = 1.0 if carrying > 0 else 0.3
+        if carrying == 0 and self.wait_count >= 8:
+            scale = 0.05
+        cost = self.build_cost(me, threats, scale)
+        dist_map, prev = self.maze.dijkstra(me, cost)
+
+        homes = [b for b in self.border_crossings if b in dist_map]
+        best_home = min(homes, key=lambda b: dist_map[b]) if homes else self.start
+        home_steps = self.dist(me, best_home)
+
+        dg = min([self.dist(me, g) for g, w in threats if w >= 1.0], default=999)
+        dg_est = min([self.dist(me, g) for g, w in threats if w < 1.0], default=999)
+        scared_left = self.scared_rounds_left(gameState)
+
+        # ---- beslissing: naar huis? ----
+        limit = 5
+        if scared_left > 12:
+            limit = 8
+        near_food = min([dist_map.get(f, 1e9) for f in food], default=1e9)
+        if not threats and near_food <= 2 and scared_left <= 12:
+            limit = 6
+        return_home = carrying > 0 and (
+            carrying >= limit
+            or dg <= 6
+            or dg_est <= 4
+            or len(food) <= 2
+            or moves_left <= home_steps + 3
+        )
+
+        target = None
+        if return_home:
+            target = best_home
+            self.current_target = None
+        else:
+            # ---- capsule als er een spook in de buurt is ----
+            if caps and threats and scared_left <= 6:
+                reach = [(dist_map.get(c, 1e9), c) for c in caps]
+                dcap, cap = min(reach)
+                if dcap < 700 and dcap <= 14 and (dg > 900 or dcap <= dg + 3):
+                    target = cap
+            # ---- voedsel kiezen met goal commitment ----
+            if target is None and food:
+                w_home = 0.3 + 0.2 * carrying
+                mate_target = None
+                for idx, t in ApexBaseAgent.targets.items():
+                    if idx != self.index:
+                        mate_target = t
+                best_f, best_s = None, 1e18
+                for f in food:
+                    d = dist_map.get(f)
+                    if d is None:
+                        continue
+                    s = d + w_home * min(self.dist(f, b) for b in self.border_crossings)
+                    if f == self.current_target:
+                        s -= 3.0
+                    if partner_mode and mate_target is not None and self.dist(f, mate_target) <= 4:
+                        s += 6.0
+                    if s < best_s:
+                        best_f, best_s = f, s
+                if best_f is not None and dist_map[best_f] < 700:
+                    target = best_f
+                    self.current_target = best_f
+                elif carrying > 0:
+                    target = best_home
+            if target is None:
+                target = best_home if carrying > 0 else None
+        ApexBaseAgent.targets[self.index] = self.current_target
+        self.wait_count = self.wait_count + 1 if target is None else 0
+        action = None
+        if target is not None:
+            action = self.step_towards(gameState, prev, me, target)
+
+        if target is None or action is None:
+            # niets veiligs te halen: wacht bij de grens (of ga naar huis)
+            action = self.step_towards(gameState, prev, me, best_home)
+            if action is None:
+                action = Directions.STOP if Directions.STOP in gameState.getLegalActions(self.index) \
+                    else self.safe_fallback(gameState)
+
+        if self.is_oscillating() and not threats and carrying == 0:
+            self.current_target = None
+            return self.safe_fallback(gameState)
+        return action
+
+    # ---------- verdedigen ----------
+
+    def defend(self, gameState):
+        me = gameState.getAgentPosition(self.index)
+        st = gameState.getAgentState(self.index)
+
+        invaders = []
+        for o in self.opponents:
+            s = gameState.getAgentState(o)
+            p = s.getPosition()
+            if p is not None and s.isPacman:
+                invaders.append(((int(p[0]), int(p[1])), s.numCarrying))
+
+        if invaders:
+            self.alarm_pos = None
+            target = min(invaders, key=lambda ic: self.dist(me, ic[0]))[0]
+            if st.scaredTimer > 0:
+                return self.scared_block(gameState, target)
+            return self.greedy_action(gameState, target, home_only=True)
+
+        # geen indringer zichtbaar: gebruik de kansverdeling
+        best_mass, best_cell = 0.0, None
+        for o in self.opponents:
+            b = self.beliefs[o]
+            mass = sum(pr for s, pr in b.p.items() if self.is_home(s))
+            if mass > best_mass:
+                home_cells = {s: pr for s, pr in b.p.items() if self.is_home(s)}
+                best_mass, best_cell = mass, max(home_cells, key=home_cells.get)
+        if best_cell is not None and best_mass >= 0.5:
+            if self.dist(me, best_cell) <= 1 and st.scaredTimer <= 0:
+                pass
+            else:
+                return self.greedy_action(gameState, best_cell, home_only=True)
+
+        if self.alarm_pos is not None and self.alarm_age < 25:
+            if self.dist(me, self.alarm_pos) <= 1:
+                self.alarm_pos = None
+            else:
+                return self.greedy_action(gameState, self.alarm_pos, home_only=True)
+
+        patrol = self.patrol_point(gameState)
+        if me == patrol:
+            legal = gameState.getLegalActions(self.index)
+            return Directions.STOP if Directions.STOP in legal else self.safe_fallback(gameState)
+        return self.greedy_action(gameState, patrol, home_only=True)
+
+    def scared_block(self, gameState, invader):
+        """Als wij bang zijn blijven we op ~2.5 stappen afstand en blokkeren we de weg."""
+        legal = [a for a in gameState.getLegalActions(self.index) if a != Directions.STOP]
+        best, best_score = None, -1e18
+        fallback, far = None, -1
+        for a in legal:
+            nxt = gameState.generateSuccessor(self.index, a).getAgentPosition(self.index)
+            if not self.is_home(nxt):
+                continue
+            d = self.dist(nxt, invader)
+            if d > far:
+                fallback, far = a, d
+            if d >= 2 and -abs(d - 2.5) > best_score:
+                best, best_score = a, -abs(d - 2.5)
+        if best is not None:
+            return best
+        return fallback if fallback is not None else self.safe_fallback(gameState)
+
+    def patrol_point(self, gameState):
+        """Staan op de grensdoorgang waar de vijand het meest waarschijnlijk binnenkomt."""
+        defended = list(self.getFoodYouAreDefending(gameState).asList())
+        ests = []
+        for o in self.opponents:
+            est, conf = self.beliefs[o].best()
+            if not self.is_home(est) and conf >= 0.05:
+                ests.append(est)
+        if ests:
+            # het meest dichtbije vermoedelijke vijandelijke aanvalspunt bij onze grens
+            def cross_cost(b):
+                return min(self.dist(e, b) for e in ests)
+            return min(self.border_crossings, key=cross_cost)
+        if not defended:
+            return self.border_crossings[len(self.border_crossings) // 2]
+        avg_y = sum(f[1] for f in defended) / len(defended)
+        return min(self.border_crossings, key=lambda b: abs(b[1] - avg_y))
 
 
 ###################
@@ -214,136 +572,15 @@ class ApexBaseAgent(CaptureAgent):
 ###################
 
 class OffensiveAgent(ApexBaseAgent):
-    """
-    Agressieve, intelligente aanvaller:
-    - Kiest doelwitten die niet door vijandelijke geesten bewaakt worden.
-    - Flankeert automatisch via open grensovergangen dankzij BFS routeplanning.
-    - Pakt krachtcapsules wanneer geesten in de buurt zijn.
-    - Eet kwetsbare geesten op voor bonuspunten en vrije doorgang.
-    - Bankeert tijdig punten om winst te verzilveren.
-    - Doel-commitment: houdt hetzelfde doelwit vast totdat het bereikt of onveilig is.
-    """
-
-    def registerInitialState(self, gameState):
-        super().registerInitialState(gameState)
-        self.current_target = None
+    """Aanvaller: haalt stippen met gevarenkosten-routes en brengt ze veilig terug."""
 
     def chooseAction(self, gameState):
-        my_pos = gameState.getAgentPosition(self.index)
-        my_state = gameState.getAgentState(self.index)
-        carrying = my_state.numCarrying
-        time_left = getattr(gameState.data, 'timeleft', 1200)
-
-        food_list = self.getFood(gameState).asList()
-        capsules = self.getCapsules(gameState)
-        active_ghosts = self.get_active_ghosts(gameState)
-        scared_ghosts = self.get_scared_ghosts(gameState)
-
-        # Verboden cellen: spookposities en directe buren ALLEEN OP VIJANDELIJK GEBIED!
-        forbidden_cells = set()
-        for g_pos in active_ghosts:
-            for dx, dy in [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)]:
-                cell = (int(g_pos[0] + dx), int(g_pos[1] + dy))
-                if not self.is_home(cell):
-                    forbidden_cells.add(cell)
-
-        min_ghost_dist = min([self.dist(my_pos, g) for g in active_ghosts], default=999)
-        min_border_dist = min([self.dist(my_pos, b) for b in self.border_crossings])
-
-        # -------------------------------------------------------------
-        # BESLISSING 1: Terugkeren naar huis (Bankeren)
-        # -------------------------------------------------------------
-        should_return = (
-            len(food_list) <= 2
-            or time_left < min_border_dist * 2 + 15
-            or carrying >= 4
-            or (carrying >= 2 and min_ghost_dist <= 5)
-            or (carrying >= 1 and min_ghost_dist <= 3)
-            or (carrying > 0 and self.getScore(gameState) > 0 and time_left < 150)
-        )
-
-        if should_return and my_state.isPacman:
-            self.current_target = None
-            safe_crossings = {b for b in self.border_crossings if b not in forbidden_cells}
-            if not safe_crossings:
-                safe_crossings = set(self.border_crossings)
-
-            action = self.bfs_direction(my_pos, safe_crossings, forbidden_cells)
-            if action:
-                return action
-            target_border = min(safe_crossings, key=lambda b: self.dist(my_pos, b))
-            return self.get_best_action_towards(gameState, target_border, forbidden_cells)
-
-        # -------------------------------------------------------------
-        # BESLISSING 2: Jagen op 'scared' geesten (gratis eliminatie)
-        # -------------------------------------------------------------
-        if scared_ghosts and my_state.isPacman:
-            nearest_scared, s_timer = min(scared_ghosts, key=lambda sg: self.dist(my_pos, sg[0]))
-            d_scared = self.dist(my_pos, nearest_scared)
-            if d_scared <= s_timer and d_scared <= 6:
-                self.current_target = None
-                action = self.bfs_direction(my_pos, {nearest_scared}, forbidden_cells)
-                if action:
-                    return action
-                return self.get_best_action_towards(gameState, nearest_scared, forbidden_cells)
-
-        # -------------------------------------------------------------
-        # BESLISSING 3: Krachtcapsule prioritering
-        # -------------------------------------------------------------
-        if capsules and active_ghosts and min_ghost_dist <= 7:
-            nearest_cap = min(capsules, key=lambda c: self.dist(my_pos, c))
-            d_cap = self.dist(my_pos, nearest_cap)
-            if d_cap < min_ghost_dist + 2:
-                self.current_target = nearest_cap
-                action = self.bfs_direction(my_pos, {nearest_cap}, forbidden_cells)
-                if action:
-                    return action
-                return self.get_best_action_towards(gameState, nearest_cap, forbidden_cells)
-
-        # -------------------------------------------------------------
-        # BESLISSING 4: Voedselverzameling met doel-commitment & flankeren
-        # -------------------------------------------------------------
-        if food_list:
-            target_valid = (
-                self.current_target is not None
-                and self.current_target in food_list
-                and self.current_target not in forbidden_cells
-                and min([self.dist(g, self.current_target) for g in active_ghosts], default=999) > 2
-            )
-
-            if not target_valid:
-                self.current_target = self._select_safe_food(my_pos, food_list, active_ghosts)
-
-            if self.current_target:
-                action = self.bfs_direction(my_pos, {self.current_target}, forbidden_cells)
-                if action:
-                    return action
-                return self.get_best_action_towards(gameState, self.current_target, forbidden_cells)
-
-        # Noodplan: ga naar de grens
-        nearest_border = min(self.border_crossings, key=lambda b: self.dist(my_pos, b))
-        return self.get_best_action_towards(gameState, nearest_border, forbidden_cells)
-
-    def _select_safe_food(self, my_pos, food_list, active_ghosts):
-        """Kiest voedsel dat niet bewaakt wordt door actieve geesten."""
-        if not active_ghosts:
-            return min(food_list, key=lambda f: self.dist(my_pos, f))
-
-        safe_foods = [
-            f for f in food_list
-            if min([self.dist(g, f) for g in active_ghosts], default=999) >= 3
-        ]
-
-        if not safe_foods:
-            return max(food_list, key=lambda f: min([self.dist(g, f) for g in active_ghosts], default=0))
-
-        def food_score(f):
-            d_my = self.dist(my_pos, f)
-            d_ghost = min([self.dist(g, f) for g in active_ghosts], default=999)
-            cluster = sum(1 for o in safe_foods if abs(f[0] - o[0]) + abs(f[1] - o[1]) <= 2)
-            return -d_my + cluster * 0.8 + min(d_ghost, 8) * 0.5
-
-        return max(safe_foods, key=food_score)
+        try:
+            self.update_info(gameState)
+            return self.attack(gameState)
+        except Exception:
+            _debug_trace()
+            return self.safe_fallback(gameState)
 
 
 ###################
@@ -352,90 +589,40 @@ class OffensiveAgent(ApexBaseAgent):
 
 class DefensiveAgent(ApexBaseAgent):
     """
-    Betrouwbare, waakzame verdediger:
-    - Onderschept indringers direct via kortste route.
-    - Onderzoekt direct verdwenen stippen (alarm).
-    - Patrouilleert strategisch de grens nabij het voedselzwaartepunt.
-    - Scared containment: houdt 2 stappen afstand wanneer 'scared'.
+    Verdediger: onderschept indringers, volgt de kansverdeling bij mist en
+    patrouilleert bij de grens. Staan we aan het eind achter, dan helpt hij mee
+    met aanvallen.
     """
 
     def registerInitialState(self, gameState):
         super().registerInitialState(gameState)
-        self.last_defended_food = set(self.getFoodYouAreDefending(gameState).asList())
-        self.alarm_pos = None
+        self.attack_mode = False
 
     def chooseAction(self, gameState):
-        my_pos = gameState.getAgentPosition(self.index)
-        my_state = gameState.getAgentState(self.index)
-        time_left = getattr(gameState.data, 'timeleft', 1200)
-        score = self.getScore(gameState)
+        try:
+            self.update_info(gameState)
+            st = gameState.getAgentState(self.index)
+            score = self.getScore(gameState)
+            moves_left = self.my_moves_left(gameState)
 
-        # Detecteer verdwenen voedsel
-        curr_defended = set(self.getFoodYouAreDefending(gameState).asList())
-        missing = self.last_defended_food - curr_defended
-        if missing:
-            self.alarm_pos = min(missing, key=lambda p: self.dist(my_pos, p))
-        self.last_defended_food = curr_defended
+            invader_visible = any(
+                gameState.getAgentState(o).isPacman and gameState.getAgentState(o).getPosition() is not None
+                for o in self.opponents)
+            if not self.attack_mode and score < 0 and moves_left <= 90 and not invader_visible:
+                self.attack_mode = True
+            if self.attack_mode and score >= 0 and st.numCarrying == 0 and not st.isPacman:
+                self.attack_mode = False
+            if self.attack_mode:
+                return self.attack(gameState, partner_mode=True)
+            return self.defend(gameState)
+        except Exception:
+            _debug_trace()
+            return self.safe_fallback(gameState)
 
-        # Zoek zichtbare indringers
-        invaders = self.get_invaders(gameState)
 
-        # -------------------------------------------------------------
-        # TOESTAND 0: Nood-DoubleOffense (als we ver achterstaan laat)
-        # -------------------------------------------------------------
-        if score <= -6 and time_left < 250 and not invaders:
-            enemy_food = self.getFood(gameState).asList()
-            if enemy_food:
-                target = min(enemy_food, key=lambda f: self.dist(my_pos, f))
-                return self.get_best_action_towards(gameState, target)
+def _debug_trace():
+    import os
+    if os.environ.get('APEX_DEBUG'):
+        import traceback
+        traceback.print_exc()
 
-        # -------------------------------------------------------------
-        # TOESTAND 1: Indringer onderscheppen
-        # -------------------------------------------------------------
-        if invaders:
-            self.alarm_pos = None
-            target_invader = max(invaders, key=lambda inv: (inv[2], -self.dist(my_pos, inv[1])))[1]
-
-            if my_state.scaredTimer > 0:
-                legal = gameState.getLegalActions(self.index)
-                moving = [a for a in legal if a != Directions.STOP]
-                best_act = Directions.STOP
-                best_score = -99999
-                for a in moving:
-                    succ = gameState.generateSuccessor(self.index, a)
-                    np = succ.getAgentPosition(self.index)
-                    if not self.is_home(np):
-                        continue
-                    d = self.dist(np, target_invader)
-                    if d >= 2:
-                        s = -abs(d - 2.5)
-                        if s > best_score:
-                            best_score = s
-                            best_act = a
-                return best_act if best_act != Directions.STOP else random.choice(moving or [Directions.STOP])
-
-            # Vol gas direct op de indringer af!
-            return self.get_best_action_towards(gameState, target_invader)
-
-        # -------------------------------------------------------------
-        # TOESTAND 2: Alarm op verdwenen voedsel
-        # -------------------------------------------------------------
-        if self.alarm_pos is not None:
-            if self.dist(my_pos, self.alarm_pos) <= 1:
-                self.alarm_pos = None  # Plek gecontroleerd
-            else:
-                return self.get_best_action_towards(gameState, self.alarm_pos)
-
-        # -------------------------------------------------------------
-        # TOESTAND 3: Strategische patrouille bij voedselzwaartepunt
-        # -------------------------------------------------------------
-        target_patrol = self._get_strategic_patrol_point(curr_defended)
-        return self.get_best_action_towards(gameState, target_patrol)
-
-    def _get_strategic_patrol_point(self, defended_food):
-        """Berekent een patrouillepunt op de grens dat dicht bij onze stippen ligt."""
-        if not defended_food:
-            return self.border_crossings[len(self.border_crossings) // 2]
-
-        avg_y = sum(f[1] for f in defended_food) / len(defended_food)
-        return min(self.border_crossings, key=lambda b: abs(b[1] - avg_y))
