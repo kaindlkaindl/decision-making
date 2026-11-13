@@ -6,10 +6,12 @@ Authors: Matin & Gabriel
 
 import os
 import sys
+import shutil
 import threading
 import subprocess
+from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 # Enable High DPI awareness on Windows for crystal clear fonts
 try:
@@ -25,6 +27,7 @@ except Exception:
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CAPTURE_SCRIPT = os.path.join(SCRIPT_DIR, "capture.py")
 LAYOUTS_DIR = os.path.join(SCRIPT_DIR, "layouts")
+REPLAYS_DIR = os.path.join(SCRIPT_DIR, "replays")
 
 # Collect available layouts
 available_layouts = ["defaultCapture", "RANDOM"]
@@ -86,6 +89,7 @@ class ModernPacmanLauncher:
         self.zoom_var = tk.StringVar(value="1.5")
         self.keys0_var = tk.BooleanVar(value=False)
         self.catch_exc_var = tk.BooleanVar(value=True)
+        self.record_var = tk.BooleanVar(value=False)
         self.custom_flags_var = tk.StringVar(value="")
         self.cmd_preview_var = tk.StringVar(value="")
         self.status_text_var = tk.StringVar(value="Klaar voor de start")
@@ -407,7 +411,13 @@ class ModernPacmanLauncher:
                                font=("Segoe UI", 8), bg=self.c_surface, fg=self.c_text_main,
                                selectcolor=self.c_input_bg, activebackground=self.c_surface,
                                activeforeground=self.c_accent_green, command=self._update_command_preview)
-        c_chk.pack(side=tk.LEFT)
+        c_chk.pack(side=tk.LEFT, padx=(0, 15))
+
+        r_chk = tk.Checkbutton(opt_row, text="Opnemen (--record)", variable=self.record_var,
+                               font=("Segoe UI", 8, "bold"), bg=self.c_surface, fg=self.c_accent_purple,
+                               selectcolor=self.c_input_bg, activebackground=self.c_surface,
+                               activeforeground=self.c_accent_purple, command=self._update_command_preview)
+        r_chk.pack(side=tk.LEFT)
 
         # Free Custom Flags
         custom_row = tk.Frame(fl_inner, bg=self.c_surface)
@@ -457,7 +467,13 @@ class ModernPacmanLauncher:
                                   bg=self.c_accent_red, fg="#ffffff", activebackground=self.c_accent_red_hover,
                                   activeforeground="#ffffff", relief="flat", bd=0, padx=18, pady=8, state=tk.DISABLED,
                                   cursor="hand2", command=self.stop_game)
-        self.stop_btn.pack(side=tk.LEFT, padx=(0, 16))
+        self.stop_btn.pack(side=tk.LEFT, padx=(0, 12))
+
+        self.replay_btn = tk.Button(btn_bar, text="🎬  REPLAY AFSPELEN", font=("Segoe UI", 10, "bold"),
+                                    bg=self.c_surface_elevated, fg=self.c_accent_purple, activebackground=self.c_border,
+                                    activeforeground="#ffffff", relief="flat", bd=0, padx=16, pady=8,
+                                    cursor="hand2", command=self.play_replay)
+        self.replay_btn.pack(side=tk.LEFT, padx=(0, 16))
 
         # Status text in action bar
         self.action_status_lbl = tk.Label(btn_bar, textvariable=self.status_text_var, font=("Segoe UI", 9, "italic"),
@@ -621,6 +637,10 @@ class ModernPacmanLauncher:
         if self.catch_exc_var.get():
             cmd.append("-c")
 
+        # Record replay
+        if self.record_var.get():
+            cmd.append("--record")
+
         # Custom flags
         custom = self.custom_flags_var.get().strip()
         if custom:
@@ -650,19 +670,49 @@ class ModernPacmanLauncher:
     # GAME EXECUTION ENGINE
     # =========================================================================
     def start_game(self):
+        cmd = self._build_command_list()
+        self._launch_process(cmd, is_recording=self.record_var.get(), label="Wedstrijd is actief...")
+
+    def play_replay(self):
+        if self.current_process is not None and self.current_process.poll() is None:
+            messagebox.showinfo("Al actief", "Er draait al een wedstrijd of replay! Stop deze eerst.")
+            return
+
+        initial_dir = REPLAYS_DIR if os.path.isdir(REPLAYS_DIR) else SCRIPT_DIR
+        replay_path = filedialog.askopenfilename(
+            title="Kies een opgeslagen replay",
+            initialdir=initial_dir,
+            filetypes=[("Replay bestanden", "*.replay replay-*"), ("Alle bestanden", "*.*")]
+        )
+        if not replay_path:
+            return
+
+        delay = round(self.delay_var.get(), 4)
+        zoom = self.zoom_var.get().strip() or "1.5"
+        cmd = [
+            sys.executable, "capture.py",
+            "--replay", replay_path,
+            "--delay-step", str(delay),
+            "-z", zoom,
+            "-r", self.red_team_var.get(),
+            "-b", self.blue_team_var.get(),
+        ]
+        self._launch_process(cmd, is_recording=False, label=f"🎬 Replay actief: {os.path.basename(replay_path)}")
+
+    def _launch_process(self, cmd: list, is_recording: bool = False, label: str = "🎮 Wedstrijd is actief..."):
         if self.current_process is not None and self.current_process.poll() is None:
             messagebox.showinfo("Al actief", "Er draait al een wedstrijd! Stop deze eerst.")
             return
 
-        cmd = self._build_command_list()
         self._log("\n" + "═" * 55, "info")
         self._log(f"▶ STARTEN: {' '.join(cmd[1:])}", "info")
         self._log("═" * 55, "info")
 
         self.start_btn.config(state=tk.DISABLED, bg="#30363d")
+        self.replay_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
         self.status_pill.config(text="● LIVE ACTIEF", fg=self.c_accent_green)
-        self.status_text_var.set("🎮 Wedstrijd is actief...")
+        self.status_text_var.set(label)
 
         def run_proc():
             try:
@@ -695,19 +745,33 @@ class ModernPacmanLauncher:
 
                 self.current_process.wait()
                 rc = self.current_process.returncode
-                self.root.after(0, self._on_game_finished, rc)
+                self.root.after(0, self._on_game_finished, rc, is_recording)
             except Exception as e:
                 self.root.after(0, self._log, f"Fout bij starten: {e}", "error")
-                self.root.after(0, self._on_game_finished, -1)
+                self.root.after(0, self._on_game_finished, -1, False)
 
         self.reader_thread = threading.Thread(target=run_proc, daemon=True)
         self.reader_thread.start()
 
-    def _on_game_finished(self, returncode: int):
+    def _on_game_finished(self, returncode: int, is_recording: bool = False):
         self.current_process = None
         self.start_btn.config(state=tk.NORMAL, bg=self.c_accent_green)
+        self.replay_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.status_pill.config(text="○ STANDBY", fg=self.c_text_muted)
+
+        if is_recording:
+            raw_replay = os.path.join(SCRIPT_DIR, "replay-0")
+            if os.path.isfile(raw_replay):
+                os.makedirs(REPLAYS_DIR, exist_ok=True)
+                red_name = os.path.splitext(self.red_team_var.get())[0]
+                blue_name = os.path.splitext(self.blue_team_var.get())[0]
+                layout = self.layout_var.get() or "defaultCapture"
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                dest_name = f"{red_name}_vs_{blue_name}_{layout}_{stamp}.replay"
+                dest_path = os.path.join(REPLAYS_DIR, dest_name)
+                shutil.move(raw_replay, dest_path)
+                self._log(f"💾 Replay opgeslagen: replays/{dest_name}", "win")
 
         if returncode == 0:
             self._log("🏁 Wedstrijd beëindigd.", "win")
