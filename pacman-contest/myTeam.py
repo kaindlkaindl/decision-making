@@ -1,5 +1,5 @@
-# mazeRunners.py
-# --------------
+# myTeam.py
+# ---------
 # Licensing Information:  You are free to use or extend these projects for
 # educational purposes provided that (1) you do not distribute or publish
 # solutions, (2) you retain this notice, and (3) you provide clear
@@ -12,19 +12,21 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 """
-mazeRunners.py
---------------
-Team: MazeRunners
+myTeam.py
+---------
+Team: MazeRunner
 Auteurs: Matin & Gabriel
 Vak: Decision Making (Minor Autonome Systemen) - HvA / UvA
 
-Ons team voor Pacman Capture The Flag werkt met twee vaste rollen:
-- OffenseAgent: haalt stippen op de helft van de tegenstander en brengt ze veilig terug.
-- DefenseAgent: bewaakt onze eigen helft, onderschept indringers en reageert op verdwenen stippen.
+Ons MazeRunner-team voor Pacman Capture The Flag werkt met twee vaste rollen:
+- MazeRunnerOffense: haalt stippen op de helft van de tegenstander en brengt ze veilig terug.
+- MazeRunnerDefense: bewaakt onze eigen helft, onderschept indringers en reageert op verdwenen stippen.
 
 Beide agents werken als een overzichtelijke toestand-automaat (State Machine) en
 gebruiken getMazeDistance voor de kortste routes door het doolhof.
 """
+
+from __future__ import annotations
 
 from captureAgents import CaptureAgent
 from game import Directions
@@ -33,18 +35,18 @@ from game import Directions
 def createTeam(firstIndex: int,
                secondIndex: int,
                isRed: bool,
-               first: str = 'OffenseAgent',
-               second: str = 'DefenseAgent',
+               first: str = 'MazeRunnerOffense',
+               second: str = 'MazeRunnerDefense',
                **kwargs) -> list[CaptureAgent]:
     """
-    Hier maken we ons team aan: één vaste aanvaller en één vaste verdediger.
+    Hier maken we ons MazeRunner-team aan: één vaste aanvaller en één vaste verdediger.
     We houden de rollen gescheiden zodat ze elkaar niet in de weg lopen en
     beide helften van het bord goed bezet blijven.
     """
     return [globals()[first](firstIndex), globals()[second](secondIndex)]
 
 
-class BaseCaptureAgent(CaptureAgent):
+class MazeRunnerBase(CaptureAgent):
     """
     Basis-agent waar onze aanvaller en verdediger van erven.
     Hierin zetten we dingen klaar die we allebei nodig hebben: waar de
@@ -131,7 +133,7 @@ class BaseCaptureAgent(CaptureAgent):
         return best_action
 
 
-class OffenseAgent(BaseCaptureAgent):
+class MazeRunnerOffense(MazeRunnerBase):
     """
     Onze aanvalsagent. Deze werkt volgens drie toestanden (op volgorde van prioriteit):
 
@@ -215,7 +217,7 @@ class OffenseAgent(BaseCaptureAgent):
         return self.get_best_action_towards(gameState, nearest_border)
 
 
-class DefenseAgent(BaseCaptureAgent):
+class MazeRunnerDefense(MazeRunnerBase):
     """
     Onze verdedigingsagent. Deze werkt ook met drie duidelijke toestanden:
 

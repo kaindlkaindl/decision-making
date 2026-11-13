@@ -2,8 +2,8 @@
 **Vak:** Decision Making (Minor Autonome Systemen)  
 **Instituut:** Hogeschool van Amsterdam (HvA) / Universiteit van Amsterdam (UvA)  
 **Auteurs:** Matin & Gabriel  
-**Team:** MazeRunners  
-**Bestand:** `mazeRunners.py`
+**Team:** MazeRunner  
+**Bestand:** `myTeam.py`
 
 ---
 
@@ -15,21 +15,21 @@ Bij ons ontwerp hebben wij gekozen voor een heldere, betrouwbare aanpak met gesc
 
 ---
 
-## 2. Ontwerp en Werking van `mazeRunners.py`
+## 2. Ontwerp en Werking van `myTeam.py`
 
-Ons team bestaat uit twee vaste rollen:
-1. **`OffenseAgent` (Aanvaller):** Verzamelt stippen aan de overkant en brengt ze veilig terug.
-2. **`DefenseAgent` (Verdediger):** Blijft op de eigen helft en onderschept vijandelijke Pacmans.
+Ons team (**MazeRunner**) bestaat uit twee vaste rollen:
+1. **`MazeRunnerOffense` (Aanvaller):** Verzamelt stippen aan de overkant en brengt ze veilig terug.
+2. **`MazeRunnerDefense` (Verdediger):** Blijft op de eigen helft en onderschept vijandelijke Pacmans.
 
-Beide agents erven van `BaseCaptureAgent`, waarin we bij de start (`registerInitialState`) de grenslijn en alle open grensovergangen bepalen. Voor de navigatie gebruiken we de voorberekende doolhofafstanden (`getMazeDistance`).
+Beide agents erven van `MazeRunnerBase`, waarin we bij de start (`registerInitialState`) de grenslijn en alle open grensovergangen bepalen. Voor de navigatie gebruiken we de voorberekende doolhofafstanden (`getMazeDistance`).
 
-### 2.1 Aanvaller (`OffenseAgent`)
+### 2.1 Aanvaller (`MazeRunnerOffense`)
 De aanvaller kiest elke beurt uit drie toestanden (op volgorde van prioriteit):
 1. **RETREAT (Terug naar huis):** Zodra we minimaal 3 stippen dragen, of minimaal 1 stip dragen terwijl een spook binnen 4 stappen nadert (of de tijd bijna op is / er nog <= 2 stippen over zijn), lopen we via de dichtstbijzijnde grensovergang terug naar onze eigen helft om te scoren.
 2. **CAPSULE (Krachtcapsule pakken):** Als er een spook in de buurt is (afstand < 6) en er een krachtcapsule dichterbij ligt dan dat spook, pakken we eerst de capsule zodat de spoken 40 zetten kwetsbaar worden.
 3. **COLLECT (Stippen eten):** In alle andere gevallen lopen we naar de dichtstbijzijnde stip. Vakjes waar een actief spook staat (en de 4 aangrenzende vakjes) slaan we over als verboden terrein (`forbidden_cells`).
 
-### 2.2 Verdediger (`DefenseAgent`)
+### 2.2 Verdediger (`MazeRunnerDefense`)
 De verdediger kiest elke beurt uit drie toestanden:
 1. **INTERCEPT (Onderscheppen):** Zien we een vijand op onze helft (binnen zichtbereik van 5 stappen)? Dan jagen we direct op hem af. Zijn we zelf `scared` (omdat de vijand een capsule at), dan houden we ~2.5 stappen afstand op eigen helft zodat we de weg blijven blokkeren zonder opgegeten te worden.
 2. **ALARM (Verdwenen voedsel):** Buiten 5 stappen zien we tegenstanders niet door de mist. Daarom vergelijken we elke beurt ons overgebleven voedsel met de vorige beurt. Verdwijnt er een stip, dan weten we dat daar net een indringer liep en lopen we direct naar die positie.
@@ -39,7 +39,7 @@ De verdediger kiest elke beurt uit drie toestanden:
 
 ## 3. Testresultaten vs `baselineTeam`
 
-Wij hebben `mazeRunners.py` getest tegen het standaard `baselineTeam` over verschillende kaarten:
+Wij hebben `myTeam.py` getest tegen het standaard `baselineTeam` over verschillende kaarten:
 
 | Kaart | Teamkleur | Scoreverschil | Uitkomst |
 | :--- | :---: | :---: | :--- |
